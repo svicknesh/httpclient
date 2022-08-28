@@ -1,3 +1,3 @@
-module github.com/svicknesh/httpclient/svicknesh/httpclient
+module github.com/svicknesh/httpclient
 
 go 1.16

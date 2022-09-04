@@ -7,14 +7,9 @@ import (
 
 // Request - client connection for  requests
 type Request struct {
-	UseTLS bool
-	//Protocol string
 	Address string
-	Port    int
 	conn    *http.Client
 	headers http.Header
-	server  string
-	//remoteAddress string
 }
 
 // Header - additional  headers to set

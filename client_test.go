@@ -13,7 +13,10 @@ func TestClient(t *testing.T) {
 
 	//client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
 
-	client := NewRequest(true, "httpclienttest.free.beeceptor.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+	client := NewRequest("https://httpclienttest.free.beeceptor.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+
+	client.SetHeader("Content-type", "application/json")
+	client.SetHeader("my-custom-header", "cool value yo!")
 
 	response, err := client.Get("/users")
 	if nil != err {
@@ -46,7 +49,7 @@ func BenchmarkClient(b *testing.B) {
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 
 	//client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
-	client := NewRequest(true, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+	client := NewRequest("https://jsonplaceholder.typicode.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
 
 	for i := 0; i < b.N; i++ {
 

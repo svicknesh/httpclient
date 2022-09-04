@@ -4,33 +4,16 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 )
 
 // NewRequest - create a new instance of Request
-func NewRequest(useTLS bool, address string, port, timeout int, tlsConfig *tls.Config, headers Headers) (request *Request) {
+func NewRequest(address string, timeout int, tlsConfig *tls.Config, headers Headers) (request *Request) {
 
 	request = new(Request)
 
 	//request.Protocol = protocol
 	request.Address = address
-	request.Port = port
-	request.UseTLS = useTLS
-
-	/*
-		switch strings.ToLower(protocol) {
-		case ProtocolHTTP1:
-			transport := &http.Transport{}
-			transport.TLSClientConfig = tlsConfig
-			request.conn = &http.Client{Transport: transport}
-
-		case ProtocolHTTP2:
-			transport := &http2.Transport{} // supports /2
-			transport.TLSClientConfig = tlsConfig
-			request.conn = &http.Client{Transport: transport}
-		}
-	*/
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsConfig
@@ -40,33 +23,13 @@ func NewRequest(useTLS bool, address string, port, timeout int, tlsConfig *tls.C
 
 	request.conn = &http.Client{Transport: transport, Timeout: time.Duration(timeout) * time.Second}
 
-	//return &http.Client{Transport: transport, Timeout: 15 * time.Second}
-
 	request.headers = make(http.Header)
 
 	for _, header := range headers {
 		request.headers.Set(header.Key, header.Value)
 	}
 
-	//request.headers.Set("Content-type", "application/json") // service only accepts JSON payload
-
-	var httpProto string
-	if request.UseTLS {
-		httpProto = "https"
-	} else {
-		httpProto = "http"
-	}
-
-	//request.server = fmt.Sprintf("%s://%s:%d", httpProto, request.Address, request.Port) // don't enclose address in [] otherwise domain names won't work, expect the caller to encompass the IPv6 address in []
-	request.server = httpProto + "://" + request.Address + ":" + strconv.Itoa(request.Port) // don't enclose address in [] otherwise domain names won't work, expect the caller to encompass the IPv6 address in []
-	//fmt.Println(request.server)
-
 	return
-}
-
-// Server() - returns the formatted server address
-func (request *Request) Server() (server string) {
-	return request.server
 }
 
 // Get - connect to the service with the given data using the  GET request
@@ -89,8 +52,8 @@ func (request *Request) Delete(endpoint string) (httpResponse *Response, err err
 	return request.connect("DELETE", endpoint, nil)
 }
 
-// SetHeaders - sets additional headers for the client
-func (request *Request) SetHeaders(key, value string) {
+// SetHeader - sets additional header for the client
+func (request *Request) SetHeader(key, value string) {
 	request.headers.Set(key, value)
 }
 
@@ -101,8 +64,8 @@ func (request *Request) GetHeader(key string) (value string) {
 
 // connect - execute the connection
 func (request *Request) connect(method, endpoint string, payload io.Reader) (response *Response, err error) {
-	//address := fmt.Sprintf("%s%s", request.server, endpoint) // don't enclose address in [] otherwise domain names won't work
-	address := request.server + endpoint // don't enclose address in [] otherwise domain names won't work
+	//address := fmt.Sprintf("%s%s", request.Address, endpoint) // don't enclose address in [] otherwise domain names won't work
+	address := request.Address + endpoint // don't enclose address in [] otherwise domain names won't work
 
 	httpRequest, err := http.NewRequest(method, address, payload)
 	if err != nil {

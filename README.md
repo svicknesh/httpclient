@@ -4,7 +4,10 @@
 
 ```go
 tlsConfig := &tls.Config{InsecureSkipVerify: true}
-client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+client := NewRequest("https://httpclienttest.free.beeceptor.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+
+client.SetHeader("my-custom-header", "cool value yo!")
+
 ```
 
 ## Make a GET request

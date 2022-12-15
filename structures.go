@@ -8,6 +8,7 @@ import (
 // Request - client connection for  requests
 type Request struct {
 	Address string
+	Suffix  string // some applications will have a default suffix, this reduces the typing or configuration
 	conn    *http.Client
 	headers http.Header
 }

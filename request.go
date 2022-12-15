@@ -62,10 +62,15 @@ func (request *Request) GetHeader(key string) (value string) {
 	return request.headers.Get(key)
 }
 
+// SetSuffix - sets a base suffix for all endpoint operations
+func (request *Request) SetSuffix(suffix string) {
+	request.Suffix = suffix
+}
+
 // connect - execute the connection
 func (request *Request) connect(method, endpoint string, payload io.Reader) (response *Response, err error) {
 	//address := fmt.Sprintf("%s%s", request.Address, endpoint) // don't enclose address in [] otherwise domain names won't work
-	address := request.Address + endpoint // don't enclose address in [] otherwise domain names won't work
+	address := request.Address + request.Suffix + endpoint // don't enclose address in [] otherwise domain names won't work
 
 	httpRequest, err := http.NewRequest(method, address, payload)
 	if err != nil {

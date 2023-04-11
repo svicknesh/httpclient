@@ -93,16 +93,10 @@ func (request *Request) connect(method, endpoint string, payload io.Reader) (res
 		return
 	}
 
-	/*
-		b, err := io.ReadAll(httpResponse.Body)
-		if err != nil {
-			return
-		}
-		response.Buffer.Write(b)
-	*/
-
 	response.headers = httpResponse.Header // save the response headers for later use
 	//fmt.Println(response.headers)
+
+	response.TLS = httpResponse.TLS // saves the response TLS
 
 	return
 }

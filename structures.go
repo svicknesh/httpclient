@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"bytes"
+	"crypto/tls"
 	"net/http"
 )
 
@@ -26,6 +27,7 @@ type Response struct {
 	StatusCode int
 	Buffer     bytes.Buffer
 	headers    http.Header
+	TLS        *tls.ConnectionState
 	//Bytes      []byte
 }
 

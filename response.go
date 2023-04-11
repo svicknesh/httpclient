@@ -51,7 +51,11 @@ func (response *Response) GetContentType() (contentType *ContentType) {
 // IsJSON - determine if the return value is of type JSON
 func (response *Response) IsJSON() (isjson bool) {
 	ct := response.GetContentType()
-	return (strings.ToLower(ct.Media) == "application/json")
+	if nil == ct {
+		return
+	}
+
+	return strings.EqualFold(ct.Media, "application/json")
 }
 
 // ToJSON - convert HTTP client response to JSON

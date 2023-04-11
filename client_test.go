@@ -3,7 +3,6 @@ package httpclient
 import (
 	"crypto/tls"
 	"fmt"
-	"log"
 	"testing"
 )
 
@@ -14,33 +13,35 @@ func TestClient(t *testing.T) {
 	//client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
 
 	client := NewRequest("https://httpclienttest.free.beeceptor.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
-
-	client.SetHeader("Content-type", "application/json")
 	client.SetHeader("my-custom-header", "cool value yo!")
 
 	response, err := client.Get("/users")
 	if nil != err {
-		log.Println(err)
+		fmt.Println(err)
 		return
 	}
 
-	//log.Println(response.StatusCode)
+	fmt.Println(response.Buffer.String())
+	fmt.Println(response.StatusCode)
 
 	//fmt.Println(response.Buffer.String())
 
 	fmt.Println("Media type is " + response.GetContentType().Media)
 	fmt.Printf("Is JSON response: %t\n", response.IsJSON())
+	fmt.Println(response.TLS.HandshakeComplete)
 
-	if response.IsJSON() {
-		type User struct {
-			ID       int    `json:"id"`
-			Username string `json:"username"`
+	/*
+		if response.IsJSON() {
+			type User struct {
+				ID       int    `json:"id"`
+				Username string `json:"username"`
+			}
+
+			var users []User
+			response.ToJSON(&users)
+			fmt.Println(users)
 		}
-
-		var users []User
-		response.ToJSON(&users)
-		fmt.Println(users)
-	}
+	*/
 
 }
 

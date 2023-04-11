@@ -45,6 +45,14 @@ func TestClient(t *testing.T) {
 
 }
 
+func TestProto(t *testing.T) {
+
+	var v Protocol = 100
+	fmt.Println(ProtocolHTTP2)
+	fmt.Println(v)
+
+}
+
 func BenchmarkClient(b *testing.B) {
 
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}

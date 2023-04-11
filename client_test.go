@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -50,6 +51,28 @@ func TestProto(t *testing.T) {
 	var v Protocol = 100
 	fmt.Println(ProtocolHTTP2)
 	fmt.Println(v)
+
+	type Proto struct {
+		P Protocol `json:"p"`
+	}
+
+	p := new(Proto)
+	p.P = ProtocolHTTP2
+
+	pb, err := json.Marshal(p)
+	if nil != err {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(string(pb))
+
+	p1 := new(Proto)
+	err = json.Unmarshal(pb, p1)
+	if nil != err {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(p1.P)
 
 }
 

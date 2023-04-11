@@ -1,5 +1,10 @@
 package httpclient
 
+import (
+	"encoding/json"
+	"strings"
+)
+
 type Protocol uint8
 
 const (
@@ -19,5 +24,21 @@ func (p Protocol) String() (str string) {
 }
 
 func (p Protocol) MarshalJSON() ([]byte, error) {
-	return []byte(p.String()), nil
+	return json.Marshal(p.String())
+}
+
+func (p *Protocol) UnmarshalJSON(protobytes []byte) (err error) {
+	protostr := string(protobytes)
+	protostr = strings.ReplaceAll(protostr, "\"", "")
+
+	switch protostr {
+	case "http":
+		*p = ProtocolHTTP1
+	case "http2":
+		*p = ProtocolHTTP2
+	default:
+		*p = 0 // unknown protocol
+	}
+
+	return
 }

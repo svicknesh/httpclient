@@ -62,4 +62,5 @@ tlsConfig := &tls.Config{InsecureSkipVerify: true}
 tlsConfig.Certificates = []tls.Certificate{clientCert}
 tlsConfig.Renegotiation = tls.RenenotiateOnceAsClient
 
+client.SetTLSConfig(tlsConfig)
 ```

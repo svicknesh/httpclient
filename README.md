@@ -44,10 +44,22 @@ if response.IsJSON() {
 ```go
 
 payload, _ := json.Marshal(values) // where values is a JSON structure
-httpResponse, err := client.Put("/remote", bytes.NewReader(payload))
+httpResponse, err := client.Put("/remote", bytes.NewReader(payload)) // for POST and PUT, the payload is expected to be an io.Reader
 if nil != err {
     return
 }
 
+
+```
+
+
+## Other options
+
+```go
+//override tls configuration with a new one
+tlsConfig := &tls.Config{InsecureSkipVerify: true}
+
+tlsConfig.Certificates = []tls.Certificate{clientCert}
+tlsConfig.Renegotiation = tls.RenenotiateOnceAsClient
 
 ```

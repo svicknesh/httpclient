@@ -8,20 +8,22 @@ import (
 )
 
 // NewRequest - create a new instance of Request
-func NewRequest(address string, timeout int, tlsConfig *tls.Config, headers Headers) (request *Request) {
+func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, headers Headers) (request *Request) {
 
 	request = new(Request)
 
 	//request.Protocol = protocol
 	request.Address = address
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = tlsConfig
-	transport.MaxIdleConns = 100
-	transport.MaxConnsPerHost = 100
-	transport.MaxIdleConnsPerHost = 100
+	request.transport = http.DefaultTransport.(*http.Transport).Clone()
+	request.transport.TLSClientConfig = tlsConfig
+	request.transport.MaxIdleConns = 100
+	request.transport.MaxConnsPerHost = 100
+	request.transport.MaxIdleConnsPerHost = 100
 
-	request.conn = &http.Client{Transport: transport, Timeout: time.Duration(timeout) * time.Second}
+	request.timeout = timeout
+
+	request.conn = &http.Client{Transport: request.transport, Timeout: timeout * time.Second}
 
 	request.headers = make(http.Header)
 
@@ -65,6 +67,12 @@ func (request *Request) GetHeader(key string) (value string) {
 // SetSuffix - sets a base suffix for all endpoint operations
 func (request *Request) SetSuffix(suffix string) {
 	request.Suffix = suffix
+}
+
+// SetTLSConfig - overrides existing TLS configuration with a new one
+func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
+	request.transport.TLSClientConfig = tlsConfig
+	request.conn = &http.Client{Transport: request.transport, Timeout: request.timeout * time.Second} // recreate the connection using the new TLS configuration
 }
 
 // connect - execute the connection

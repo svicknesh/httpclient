@@ -64,6 +64,11 @@ func (request *Request) GetHeader(key string) (value string) {
 	return request.headers.Get(key)
 }
 
+// SetUserAgent - sets a custom user agent for the client
+func (request *Request) SetUserAgent(useragent string) {
+	request.SetHeader("user-agent", useragent)
+}
+
 // SetSuffix - sets a base suffix for all endpoint operations
 func (request *Request) SetSuffix(suffix string) {
 	request.Suffix = suffix

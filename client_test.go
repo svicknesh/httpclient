@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -113,5 +114,18 @@ func BenchmarkClient(b *testing.B) {
 		*/
 
 	}
+
+}
+
+func TestSlash(t *testing.T) {
+
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+
+	client := NewRequest("https://example.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+	client.SetSuffix("/woohoo/")
+
+	endpoint := "/user/hello"
+
+	fmt.Print(client.Address, client.Suffix, strings.TrimPrefix(endpoint, "/"), "\n")
 
 }

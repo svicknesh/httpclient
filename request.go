@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -12,7 +13,10 @@ func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, he
 
 	request = new(Request)
 
-	//request.Protocol = protocol
+	if !strings.HasSuffix(address, "/") {
+		address = address + "/" // add an ending '/' if it doesn't exist
+	}
+
 	request.Address = address
 
 	request.transport = http.DefaultTransport.(*http.Transport).Clone()
@@ -71,7 +75,13 @@ func (request *Request) SetUserAgent(useragent string) {
 
 // SetSuffix - sets a base suffix for all endpoint operations
 func (request *Request) SetSuffix(suffix string) {
-	request.Suffix = suffix
+
+	if !strings.HasSuffix(suffix, "/") {
+		suffix = suffix + "/" // add an ending '/' if it doesn't already exist for the suffix
+	}
+
+	request.Suffix = strings.TrimPrefix(suffix, "/")
+	//request.Suffix = strings.TrimPrefix(suffix, "/") // remove leading '/' if it exists in the suffix
 }
 
 // SetTLSConfig - overrides existing TLS configuration with a new one
@@ -83,7 +93,7 @@ func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
 // connect - execute the connection
 func (request *Request) connect(method, endpoint string, payload io.Reader) (response *Response, err error) {
 	//address := fmt.Sprintf("%s%s", request.Address, endpoint) // don't enclose address in [] otherwise domain names won't work
-	address := request.Address + request.Suffix + endpoint // don't enclose address in [] otherwise domain names won't work
+	address := request.Address + request.Suffix + strings.TrimPrefix(endpoint, "/") // don't enclose address in [] otherwise domain names won't work, remove any leading '/' from the endpoint
 
 	httpRequest, err := http.NewRequest(method, address, payload)
 	if err != nil {

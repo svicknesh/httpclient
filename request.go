@@ -53,6 +53,11 @@ func (request *Request) Put(endpoint string, payload io.Reader) (httpResponse *R
 	return request.connect("PUT", endpoint, payload)
 }
 
+// Patch - connect to the service with the given data using the  PATCH request
+func (request *Request) Patch(endpoint string, payload io.Reader) (httpResponse *Response, err error) {
+	return request.connect("PATCH", endpoint, payload)
+}
+
 // Delete - connect to the service with the given data using the  DELETE request
 func (request *Request) Delete(endpoint string) (httpResponse *Response, err error) {
 	return request.connect("DELETE", endpoint, nil)

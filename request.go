@@ -38,29 +38,34 @@ func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, he
 	return
 }
 
-// Get - connect to the service with the given data using the  GET request
+// Get - connect to the service with the given data using the  GET HTTP request verb
 func (request *Request) Get(endpoint string) (httpResponse *Response, err error) {
 	return request.connect("GET", endpoint, nil)
 }
 
-// Post - connect to the service with the given data using the  POST request
+// Post - connect to the service with the given data using the  POST HTTP request verb
 func (request *Request) Post(endpoint string, payload io.Reader) (httpResponse *Response, err error) {
 	return request.connect("POST", endpoint, payload)
 }
 
-// Put - connect to the service with the given data using the  PUT request
+// Put - connect to the service with the given data using the  PUT HTTP request verb
 func (request *Request) Put(endpoint string, payload io.Reader) (httpResponse *Response, err error) {
 	return request.connect("PUT", endpoint, payload)
 }
 
-// Patch - connect to the service with the given data using the  PATCH request
+// Patch - connect to the service with the given data using the  PATCH HTTP request verb
 func (request *Request) Patch(endpoint string, payload io.Reader) (httpResponse *Response, err error) {
 	return request.connect("PATCH", endpoint, payload)
 }
 
-// Delete - connect to the service with the given data using the  DELETE request
+// Delete - connect to the service with the given data using the  DELETE HTTP request verb
 func (request *Request) Delete(endpoint string) (httpResponse *Response, err error) {
 	return request.connect("DELETE", endpoint, nil)
+}
+
+// Custom - connect to the service with the given data using a custom HTTP request verb
+func (request *Request) Custom(httpVerb, endpoint string) (httpResponse *Response, err error) {
+	return request.connect(httpVerb, endpoint, nil)
 }
 
 // SetHeader - sets additional header for the client

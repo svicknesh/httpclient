@@ -24,6 +24,7 @@ func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, he
 	request.transport.MaxIdleConns = 100
 	request.transport.MaxConnsPerHost = 100
 	request.transport.MaxIdleConnsPerHost = 100
+	request.suffixEnabled = true
 
 	request.timeout = timeout
 
@@ -94,6 +95,11 @@ func (request *Request) SetSuffix(suffix string) {
 	//request.Suffix = strings.TrimPrefix(suffix, "/") // remove leading '/' if it exists in the suffix
 }
 
+// EnableSuffix - temporarily enables or disables base suffix for a call
+func (request *Request) EnableSuffix(enabled bool) {
+	request.suffixEnabled = enabled
+}
+
 // SetTLSConfig - overrides existing TLS configuration with a new one
 func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
 	request.transport.TLSClientConfig = tlsConfig
@@ -103,7 +109,12 @@ func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
 // connect - execute the connection
 func (request *Request) connect(method, endpoint string, payload io.Reader) (response *Response, err error) {
 	//address := fmt.Sprintf("%s%s", request.Address, endpoint) // don't enclose address in [] otherwise domain names won't work
-	address := request.Address + request.Suffix + strings.TrimPrefix(endpoint, "/") // don't enclose address in [] otherwise domain names won't work, remove any leading '/' from the endpoint
+	var suffix string
+	if request.suffixEnabled {
+		suffix = request.Suffix
+	}
+
+	address := request.Address + suffix + strings.TrimPrefix(endpoint, "/") // don't enclose address in [] otherwise domain names won't work, remove any leading '/' from the endpoint
 
 	httpRequest, err := http.NewRequest(method, address, payload)
 	if err != nil {

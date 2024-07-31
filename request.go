@@ -24,6 +24,7 @@ func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, he
 	request.transport.MaxIdleConns = 100
 	request.transport.MaxConnsPerHost = 100
 	request.transport.MaxIdleConnsPerHost = 100
+	request.transport.ForceAttemptHTTP2 = true // force attempting usage of HTTP/2
 	request.suffixEnabled = true
 
 	request.timeout = timeout

@@ -103,6 +103,7 @@ func (request *Request) EnableSuffix(enabled bool) {
 
 // SetTLSConfig - overrides existing TLS configuration with a new one
 func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
+	tlsConfig.Renegotiation = tls.RenegotiateOnceAsClient // we request renegotiation by the server to use the latest TLS configuration
 	request.transport.TLSClientConfig = tlsConfig
 	request.conn = &http.Client{Transport: request.transport, Timeout: request.timeout * time.Second} // recreate the connection using the new TLS configuration
 }

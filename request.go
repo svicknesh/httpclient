@@ -110,13 +110,17 @@ func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
 
 // connect - execute the connection
 func (request *Request) connect(method, endpoint string, payload io.Reader) (response *Response, err error) {
-	//address := fmt.Sprintf("%s%s", request.Address, endpoint) // don't enclose address in [] otherwise domain names won't work
-	var suffix string
-	if request.suffixEnabled {
-		suffix = request.Suffix
-	}
 
-	address := request.Address + suffix + strings.TrimPrefix(endpoint, "/") // don't enclose address in [] otherwise domain names won't work, remove any leading '/' from the endpoint
+	// Build the full URL.
+	var sb strings.Builder
+	sb.WriteString(request.Address)
+	if request.suffixEnabled && request.Suffix != "" {
+		sb.WriteString(request.Suffix)
+	}
+	// Trim any leading '/' from endpoint.
+	sb.WriteString(strings.TrimLeft(endpoint, "/"))
+	address := sb.String() // don't enclose address in [] otherwise domain names won't work, remove any leading '/' from the endpoint
+	//fmt.Println(address)
 
 	httpRequest, err := http.NewRequest(method, address, payload)
 	if err != nil {

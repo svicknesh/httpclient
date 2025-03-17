@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -28,8 +29,13 @@ func (p Protocol) MarshalJSON() ([]byte, error) {
 }
 
 func (p *Protocol) UnmarshalJSON(protobytes []byte) (err error) {
-	protostr := string(protobytes)
-	protostr = strings.ReplaceAll(protostr, "\"", "")
+
+	// Use strconv.Unquote to remove surrounding quotes.
+	protostr, err := strconv.Unquote(string(protobytes))
+	if err != nil {
+		// Fallback to trimming quotes manually.
+		protostr = strings.Trim(string(protobytes), "\"")
+	}
 
 	switch protostr {
 	case "http":

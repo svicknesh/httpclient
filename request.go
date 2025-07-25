@@ -101,11 +101,19 @@ func (request *Request) EnableSuffix(enabled bool) {
 	request.suffixEnabled = enabled
 }
 
-// SetTLSConfig - overrides existing TLS configuration with a new one
+// SetTLSConfig - overrides existing TLS configuration with a new one, HTTP/2 does not support renegotiation so we need to downgrade it to HTTP/1.1
 func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
 	tlsConfig.Renegotiation = tls.RenegotiateOnceAsClient // we request renegotiation by the server to use the latest TLS configuration
-	request.transport.TLSClientConfig = tlsConfig
-	request.conn = &http.Client{Transport: request.transport, Timeout: request.timeout * time.Second} // recreate the connection using the new TLS configuration
+
+	tr := request.transport
+
+	tr.TLSClientConfig = tlsConfig
+	tr.CloseIdleConnections() // tear down old TLS config and use new one for any already‑open or idle connections
+
+	// disable HTTP/2 if really need renegotiation
+	tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+
+	request.conn = &http.Client{Transport: tr, Timeout: request.timeout * time.Second} // recreate the connection using the new TLS configuration
 }
 
 // connect - execute the connection

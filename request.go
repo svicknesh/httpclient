@@ -65,9 +65,14 @@ func (request *Request) Delete(endpoint string) (httpResponse *Response, err err
 	return request.connect("DELETE", endpoint, nil)
 }
 
+// Options - connect to the service with the given data using the  OPTIONS HTTP request verb
+func (request *Request) Options(endpoint string) (httpResponse *Response, err error) {
+	return request.connect("OPTIONS", endpoint, nil)
+}
+
 // Custom - connect to the service with the given data using a custom HTTP request verb
-func (request *Request) Custom(httpVerb, endpoint string) (httpResponse *Response, err error) {
-	return request.connect(httpVerb, endpoint, nil)
+func (request *Request) Custom(httpVerb, endpoint string, payload io.Reader) (httpResponse *Response, err error) {
+	return request.connect(httpVerb, endpoint, payload)
 }
 
 // SetHeader - sets additional header for the client

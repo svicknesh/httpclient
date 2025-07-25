@@ -129,3 +129,23 @@ func TestSlash(t *testing.T) {
 	fmt.Print(client.Address, client.Suffix, strings.TrimPrefix(endpoint, "/"), "\n")
 
 }
+
+func TestOptions(t *testing.T) {
+
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+
+	//client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+
+	client := NewRequest("https://httpclienttest.free.beeceptor.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+	client.SetHeader("my-custom-header", "cool value yo!")
+
+	response, err := client.Options("/users")
+	if nil != err {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println(response.GetHeader("Access-Control-Allow-Methods"))
+	fmt.Println(response.StatusCode)
+
+}

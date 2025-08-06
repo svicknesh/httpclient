@@ -70,6 +70,6 @@ func (response *Response) IsJSON() (isjson bool) {
 }
 
 // ToJSON - convert HTTP client response to JSON
-func (response *Response) ToJSON(output interface{}) (err error) {
+func (response *Response) ToJSON(output any) (err error) {
 	return json.NewDecoder(&response.Buffer).Decode(output)
 }

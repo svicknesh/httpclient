@@ -1,6 +1,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -69,7 +70,7 @@ func (response *Response) IsJSON() (isjson bool) {
 	return strings.EqualFold(ct.Media, "application/json")
 }
 
-// ToJSON - convert HTTP client response to JSON
+// ToJSON - convert HTTP client response to JSON without consuming the response buffer
 func (response *Response) ToJSON(output any) (err error) {
-	return json.NewDecoder(&response.Buffer).Decode(output)
+	return json.NewDecoder(bytes.NewReader(response.Buffer.Bytes())).Decode(output)
 }

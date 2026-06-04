@@ -35,6 +35,7 @@ func (p *Protocol) UnmarshalJSON(protobytes []byte) (err error) {
 	if err != nil {
 		// Fallback to trimming quotes manually.
 		protostr = strings.Trim(string(protobytes), "\"")
+		err = nil // fallback parse succeeded; clear the Unquote error
 	}
 
 	switch protostr {

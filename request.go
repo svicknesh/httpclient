@@ -29,7 +29,7 @@ func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, he
 
 	request.timeout = timeout
 
-	request.conn = &http.Client{Transport: request.transport, Timeout: timeout * time.Second}
+	request.conn = &http.Client{Transport: request.transport, Timeout: timeout}
 
 	request.headers = make(http.Header)
 
@@ -111,19 +111,18 @@ func (request *Request) GetTLSConfig() (tlsConfig *tls.Config) {
 	return request.transport.TLSClientConfig
 }
 
-// SetTLSConfig - overrides existing TLS configuration with a new one, HTTP/2 does not support renegotiation so we need to downgrade it to HTTP/1.1
+// SetTLSConfig - overrides existing TLS configuration with a new one; downgrades to HTTP/1.1 because HTTP/2 forbids TLS renegotiation (RFC 7540 §9.2.1)
 func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
-	tlsConfig.Renegotiation = tls.RenegotiateOnceAsClient // we request renegotiation by the server to use the latest TLS configuration
+	tlsConfig = tlsConfig.Clone() // clone to avoid mutating the caller's config
+	tlsConfig.Renegotiation = tls.RenegotiateOnceAsClient
 
 	tr := request.transport
 
 	tr.TLSClientConfig = tlsConfig
-	tr.CloseIdleConnections() // tear down old TLS config and use new one for any already‑open or idle connections
+	tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{} // disable HTTP/2; it forbids renegotiation
+	tr.CloseIdleConnections()
 
-	// disable HTTP/2 if really need renegotiation
-	//tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
-
-	request.conn = &http.Client{Transport: tr, Timeout: request.timeout * time.Second} // recreate the connection using the new TLS configuration
+	request.conn = &http.Client{Transport: tr, Timeout: request.timeout}
 }
 
 // connect - execute the connection
@@ -145,7 +144,7 @@ func (request *Request) connect(method, endpoint string, payload io.Reader) (res
 		return
 	}
 
-	httpRequest.Header = request.headers
+	httpRequest.Header = request.headers.Clone()
 
 	httpResponse, err := request.conn.Do(httpRequest)
 	if err != nil {

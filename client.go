@@ -5,9 +5,15 @@ import (
 	"encoding/json"
 )
 
-// NewTLSConfig - creates a new TLS cofiguration with the option `InsecureSkipVerify` set to true.
+// NewTLSConfig - creates a new TLS configuration with secure defaults.
 func NewTLSConfig() (tlsConfig *tls.Config) {
-	return &tls.Config{InsecureSkipVerify: true}
+	return &tls.Config{}
+}
+
+// NewInsecureTLSConfig - creates a TLS configuration with certificate verification disabled.
+// WARNING: do not use in production; connections are vulnerable to man-in-the-middle attacks.
+func NewInsecureTLSConfig() (tlsConfig *tls.Config) {
+	return &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 }
 
 func (h *Headers) Set(header, value string) {

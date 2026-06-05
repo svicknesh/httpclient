@@ -60,6 +60,33 @@ func (response *Response) GetContentType() (ct *ContentType) {
 	return
 }
 
+// String returns the response body as a UTF-8 string without consuming the buffer.
+func (response *Response) String() string {
+	return response.Buffer.String()
+}
+
+// Bytes returns a copy of the response body as a byte slice without consuming the buffer.
+func (response *Response) Bytes() []byte {
+	b := make([]byte, response.Buffer.Len())
+	copy(b, response.Buffer.Bytes())
+	return b
+}
+
+// IsSuccess returns true when the HTTP status code is in the 2xx range.
+func (response *Response) IsSuccess() bool {
+	return response.StatusCode >= 200 && response.StatusCode <= 299
+}
+
+// IsClientError returns true when the HTTP status code is in the 4xx range.
+func (response *Response) IsClientError() bool {
+	return response.StatusCode >= 400 && response.StatusCode <= 499
+}
+
+// IsServerError returns true when the HTTP status code is in the 5xx range.
+func (response *Response) IsServerError() bool {
+	return response.StatusCode >= 500 && response.StatusCode <= 599
+}
+
 // IsJSON - determine if the return value is of type JSON
 func (response *Response) IsJSON() (isjson bool) {
 	ct := response.GetContentType()

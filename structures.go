@@ -3,6 +3,7 @@ package httpclient
 import (
 	"bytes"
 	"crypto/tls"
+	"math/rand"
 	"net/http"
 	"time"
 )
@@ -16,6 +17,26 @@ type Request struct {
 	conn          *http.Client
 	headers       http.Header
 	suffixEnabled bool
+
+	// RetryConfig controls automatic retry with exponential backoff.
+	// A zero value disables retry.
+	RetryConfig RetryConfig
+
+	// CircuitBreaker configures the per-Request circuit breaker.
+	// A zero value (Enabled: false) disables the circuit breaker.
+	CircuitBreaker CircuitBreakerConfig
+
+	// breaker holds the mutable circuit breaker state; not exported.
+	breaker circuitBreaker
+
+	// rng is a non-global random source seeded from crypto/rand for jitter.
+	// Not safe for concurrent use; connect uses it only under the retry loop
+	// which is serial per request.
+	rng *rand.Rand
+
+	// RateLimiter, when non-nil, gates each request through a token-bucket limiter.
+	// Set with SetRateLimit. nil means no rate limiting.
+	RateLimiter *Limiter
 }
 
 // Header - additional  headers to set

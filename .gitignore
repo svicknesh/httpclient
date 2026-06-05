@@ -1,1 +1,23 @@
 go.sum
+# hts-ai-ops workspace (added by hts-context)
+.hts-context/compact.md
+.hts-context/files.md
+.hts-context/summary.md
+.hts-context/manifest.json
+.hts-context/prompts/
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+build/
+dist/
+tmp/
+.cache/
+*.log
+*.backup.*
+.hts-context/*
+.agent-policy.yml
+CLAUDE.md
+AGENTS.md

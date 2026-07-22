@@ -60,32 +60,40 @@ func newCryptoSeededRand() *mathrand.Rand {
 	return mathrand.New(mathrand.NewSource(seed)) //nolint:gosec
 }
 
-// Get - connect to the service with the given data using the  GET HTTP request verb
+// Get - connect to the service with the given data using the GET HTTP request verb
 func (request *Request) Get(ctx context.Context, endpoint string) (httpResponse *Response, err error) {
 	return request.connect(ctx, "GET", endpoint, nil)
 }
 
-// Post - connect to the service with the given data using the  POST HTTP request verb
+// Query - sends an HTTP QUERY request (RFC 10008) through the existing client
+// pipeline (see connect). This does not by itself guarantee full RFC 10008
+// redirect semantics; net/http's default redirect handling predates the
+// QUERY method — see TestQueryRedirectMethodPreservation.
+func (request *Request) Query(ctx context.Context, endpoint string, payload io.Reader) (httpResponse *Response, err error) {
+	return request.connect(ctx, "QUERY", endpoint, payload)
+}
+
+// Post - connect to the service with the given data using the POST HTTP request verb
 func (request *Request) Post(ctx context.Context, endpoint string, payload io.Reader) (httpResponse *Response, err error) {
 	return request.connect(ctx, "POST", endpoint, payload)
 }
 
-// Put - connect to the service with the given data using the  PUT HTTP request verb
+// Put - connect to the service with the given data using the PUT HTTP request verb
 func (request *Request) Put(ctx context.Context, endpoint string, payload io.Reader) (httpResponse *Response, err error) {
 	return request.connect(ctx, "PUT", endpoint, payload)
 }
 
-// Patch - connect to the service with the given data using the  PATCH HTTP request verb
+// Patch - connect to the service with the given data using the PATCH HTTP request verb
 func (request *Request) Patch(ctx context.Context, endpoint string, payload io.Reader) (httpResponse *Response, err error) {
 	return request.connect(ctx, "PATCH", endpoint, payload)
 }
 
-// Delete - connect to the service with the given data using the  DELETE HTTP request verb
+// Delete - connect to the service with the given data using the DELETE HTTP request verb
 func (request *Request) Delete(ctx context.Context, endpoint string) (httpResponse *Response, err error) {
 	return request.connect(ctx, "DELETE", endpoint, nil)
 }
 
-// Options - connect to the service with the given data using the  OPTIONS HTTP request verb
+// Options - connect to the service with the given data using the OPTIONS HTTP request verb
 func (request *Request) Options(ctx context.Context, endpoint string) (httpResponse *Response, err error) {
 	return request.connect(ctx, "OPTIONS", endpoint, nil)
 }

@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -470,6 +472,315 @@ func TestRateLimiterUnit(t *testing.T) {
 	// With 1000/s rate and burst drained, need ~1ms to get a token.
 	// The 0-timeout context should be done immediately.
 	_ = lim.Wait(ctx2) // may or may not error; just ensure no panic
+}
+
+// TestMethodVerbs is a table-driven regression test covering every supported
+// HTTP verb method (including QUERY) end-to-end against a local test server.
+// It fails if a future change maps QUERY (or any other verb) onto a different
+// method, drops its body, loses its query string, or bypasses the normal
+// header/response handling pipeline shared by all verb methods.
+func TestMethodVerbs(t *testing.T) {
+	type captured struct {
+		method   string
+		path     string
+		rawQuery string
+		body     string
+		headers  http.Header
+	}
+
+	var mu sync.Mutex
+	var last captured
+
+	srv, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+
+		mu.Lock()
+		last = captured{
+			method:   r.Method,
+			path:     r.URL.Path,
+			rawQuery: r.URL.RawQuery,
+			body:     string(bodyBytes),
+			headers:  r.Header.Clone(),
+		}
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer srv.Close()
+
+	client := NewRequest(srv.URL, 5*time.Second, nil, Headers{
+		{Key: "Content-Type", Value: "application/json"},
+	})
+	client.SetHeader("X-Custom-Test", "custom-value")
+	client.SetBearerToken("test-token")
+
+	cases := []struct {
+		name       string
+		wantMethod string
+		wantBody   string
+		call       func(ctx context.Context) (*Response, error)
+	}{
+		{"GET", "GET", "", func(ctx context.Context) (*Response, error) {
+			return client.Get(ctx, "/items?foo=bar")
+		}},
+		{"POST", "POST", "post-body", func(ctx context.Context) (*Response, error) {
+			return client.Post(ctx, "/items?foo=bar", strings.NewReader("post-body"))
+		}},
+		{"PUT", "PUT", "put-body", func(ctx context.Context) (*Response, error) {
+			return client.Put(ctx, "/items?foo=bar", strings.NewReader("put-body"))
+		}},
+		{"PATCH", "PATCH", "patch-body", func(ctx context.Context) (*Response, error) {
+			return client.Patch(ctx, "/items?foo=bar", strings.NewReader("patch-body"))
+		}},
+		{"DELETE", "DELETE", "", func(ctx context.Context) (*Response, error) {
+			return client.Delete(ctx, "/items?foo=bar")
+		}},
+		{"OPTIONS", "OPTIONS", "", func(ctx context.Context) (*Response, error) {
+			return client.Options(ctx, "/items?foo=bar")
+		}},
+		{"QUERY", "QUERY", "query-body", func(ctx context.Context) (*Response, error) {
+			return client.Query(ctx, "/items?foo=bar", strings.NewReader("query-body"))
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := tc.call(context.Background())
+			if err != nil {
+				t.Fatalf("%s: unexpected error: %v", tc.name, err)
+			}
+
+			mu.Lock()
+			got := last
+			mu.Unlock()
+
+			// The outgoing method must be exactly what was requested — not
+			// silently converted to GET, POST, or any other verb.
+			if got.method != tc.wantMethod {
+				t.Fatalf("%s: server observed method %q, want %q", tc.name, got.method, tc.wantMethod)
+			}
+			if got.path != "/items" {
+				t.Fatalf("%s: server observed path %q, want %q", tc.name, got.path, "/items")
+			}
+			if got.rawQuery != "foo=bar" {
+				t.Fatalf("%s: server observed query %q, want %q", tc.name, got.rawQuery, "foo=bar")
+			}
+			if got.body != tc.wantBody {
+				t.Fatalf("%s: server observed body %q, want %q", tc.name, got.body, tc.wantBody)
+			}
+			if ct := got.headers.Get("Content-Type"); ct != "application/json" {
+				t.Fatalf("%s: server observed Content-Type %q, want %q", tc.name, ct, "application/json")
+			}
+			if auth := got.headers.Get("Authorization"); auth != "Bearer test-token" {
+				t.Fatalf("%s: server observed Authorization %q, want %q", tc.name, auth, "Bearer test-token")
+			}
+			if custom := got.headers.Get("X-Custom-Test"); custom != "custom-value" {
+				t.Fatalf("%s: server observed X-Custom-Test %q, want %q", tc.name, custom, "custom-value")
+			}
+
+			// Successful responses must go through the existing response-handling path.
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("%s: expected 200, got %d", tc.name, resp.StatusCode)
+			}
+			if !resp.IsJSON() {
+				t.Fatalf("%s: expected JSON content type", tc.name)
+			}
+			if resp.String() != `{"status":"ok"}` {
+				t.Fatalf("%s: unexpected body %q", tc.name, resp.String())
+			}
+		})
+	}
+}
+
+// TestQueryNonSuccessResponse verifies that a non-success response to a QUERY
+// request uses the same error-handling behaviour as every other verb: the
+// response and its status code are returned normally, with no error, and the
+// body remains readable.
+func TestQueryNonSuccessResponse(t *testing.T) {
+	srv, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("not found"))
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer srv.Close()
+
+	client := NewRequest(srv.URL, 5*time.Second, nil, nil)
+
+	resp, err := client.Query(context.Background(), "/missing", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+	if resp.String() != "not found" {
+		t.Fatalf("unexpected body: %q", resp.String())
+	}
+}
+
+// TestQueryCurrentRedirectBehavior records Go's actual net/http redirect
+// behaviour for QUERY across 301, 302, 303, 307, and 308. This client does not
+// override http.Client.CheckRedirect, so redirects are handled entirely by
+// the Go standard library before connect() ever sees the final response.
+//
+// RFC 10008 §2.5 ("The HTTP QUERY Method") requires 301, 302, 307, and 308
+// responses to a QUERY request to preserve both the QUERY method and the
+// enclosed content when the user agent retries against the new target URI;
+// only a 303 response should be followed as a GET. Go's net/http predates
+// RFC 10008 and applies its pre-existing rule instead (see
+// net/http.redirectBehavior, referencing Issue 18570): only GET and HEAD
+// survive a 301/302/303 redirect unmodified. Every other method — including
+// QUERY — is downgraded to GET with the body dropped. This test proves that
+// downgrade happens for 301/302 (a genuine RFC 10008 non-compliance) and,
+// coincidentally correctly per the RFC, for 303 too. 307 and 308 do preserve
+// the QUERY method and body, but only because this test's payload is a
+// *strings.Reader — see TestQueryRedirectBodyReplayRequiresGetBody for the
+// case where that does not hold.
+func TestQueryCurrentRedirectBehavior(t *testing.T) {
+	type captured struct {
+		method string
+		path   string
+		body   string
+		auth   string
+	}
+
+	cases := []struct {
+		name            string
+		status          int
+		wantFinalMethod string
+		wantFinalBody   string
+	}{
+		{"301_MovedPermanently", http.StatusMovedPermanently, "GET", ""},
+		{"302_Found", http.StatusFound, "GET", ""},
+		{"303_SeeOther", http.StatusSeeOther, "GET", ""},
+		{"307_TemporaryRedirect", http.StatusTemporaryRedirect, "QUERY", "query-payload"},
+		{"308_PermanentRedirect", http.StatusPermanentRedirect, "QUERY", "query-payload"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var hops []captured
+
+			srv, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				bodyBytes, _ := io.ReadAll(r.Body)
+
+				mu.Lock()
+				hops = append(hops, captured{
+					method: r.Method,
+					path:   r.URL.Path,
+					body:   string(bodyBytes),
+					auth:   r.Header.Get("Authorization"),
+				})
+				mu.Unlock()
+
+				if r.URL.Path == "/redirect" {
+					w.Header().Set("Location", "/target")
+					w.WriteHeader(tc.status)
+					return
+				}
+
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("final-response"))
+			}))
+			if !ok {
+				t.Skip("TCP listener not available in this environment")
+			}
+			defer srv.Close()
+
+			client := NewRequest(srv.URL, 5*time.Second, nil, nil)
+			client.SetBearerToken("redirect-token")
+
+			resp, err := client.Query(context.Background(), "/redirect", strings.NewReader("query-payload"))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected the redirect to be followed to a final 200, got %d", resp.StatusCode)
+			}
+			if resp.String() != "final-response" {
+				t.Fatalf("expected redirect to be followed to /target, got body %q", resp.String())
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(hops) != 2 {
+				t.Fatalf("expected 2 request hops (redirect + target), got %d: %+v", len(hops), hops)
+			}
+			first, final := hops[0], hops[1]
+
+			if first.method != "QUERY" {
+				t.Fatalf("first hop: expected method QUERY, got %q", first.method)
+			}
+			if final.path != "/target" {
+				t.Fatalf("final hop: expected path /target, got %q", final.path)
+			}
+			if final.method != tc.wantFinalMethod {
+				t.Fatalf("final hop: status %d — expected method %q, got %q", tc.status, tc.wantFinalMethod, final.method)
+			}
+			if final.body != tc.wantFinalBody {
+				t.Fatalf("final hop: status %d — expected body %q, got %q", tc.status, tc.wantFinalBody, final.body)
+			}
+			if final.auth != "Bearer redirect-token" {
+				t.Fatalf("final hop: Authorization header not preserved across same-host redirect, got %q", final.auth)
+			}
+		})
+	}
+}
+
+// TestQueryRedirectBodyReplayRequiresGetBody proves that request-body replay
+// on a 307/308 redirect is NOT reliable for every io.Reader accepted by
+// Query — only for the concrete types net/http.NewRequestWithContext
+// special-cases (*bytes.Buffer, *bytes.Reader, *strings.Reader), which is
+// where it populates Request.GetBody. For any other io.Reader — here,
+// io.NopCloser wrapping a *strings.Reader, which hides the concrete type the
+// switch in NewRequestWithContext matches on — GetBody stays nil. Per
+// net/http.redirectBehavior, when GetBody is nil and the request had a body,
+// the client deliberately does NOT follow the 307/308 redirect: it returns
+// the redirect response to the caller unmodified rather than risk sending a
+// bodyless or already-drained request. This is safe (no data corruption) but
+// means the caller must be prepared to handle a raw 307/308 Response.
+func TestQueryRedirectBodyReplayRequiresGetBody(t *testing.T) {
+	srv, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			w.Header().Set("Location", "/target")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			_, _ = w.Write([]byte("redirect-body"))
+			return
+		}
+		t.Errorf("redirect target should not be reached when GetBody is unavailable, but got %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer srv.Close()
+
+	client := NewRequest(srv.URL, 5*time.Second, nil, nil)
+
+	// io.NopCloser hides the underlying *strings.Reader behind a type
+	// NewRequestWithContext does not recognize, so GetBody is left nil.
+	payload := io.NopCloser(strings.NewReader("query-payload"))
+
+	resp, err := client.Query(context.Background(), "/redirect", payload)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The redirect is NOT followed — the 307 response is returned as-is.
+	if resp.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("expected the unfollowed 307 response to be returned, got status %d", resp.StatusCode)
+	}
+	if resp.String() != "redirect-body" {
+		t.Fatalf("unexpected body %q", resp.String())
+	}
 }
 
 // TestResponseStatus verifies the IsSuccess, IsClientError, and IsServerError helpers.

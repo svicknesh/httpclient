@@ -52,9 +52,9 @@ type CircuitBreakerConfig struct {
 type cbState uint8
 
 const (
-	cbClosed  cbState = iota // requests flow normally
-	cbOpen                   // all requests rejected immediately
-	cbHalfOpen               // one probe request allowed to test recovery
+	cbClosed   cbState = iota // requests flow normally
+	cbOpen                    // all requests rejected immediately
+	cbHalfOpen                // one probe request allowed to test recovery
 )
 
 // circuitBreaker holds the mutable circuit breaker state for a single Request.

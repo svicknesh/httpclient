@@ -37,6 +37,12 @@ type Request struct {
 	// RateLimiter, when non-nil, gates each request through a token-bucket limiter.
 	// Set with SetRateLimit. nil means no rate limiting.
 	RateLimiter *Limiter
+
+	// checkRedirect holds the caller-configured redirect policy, mirrored onto
+	// conn.CheckRedirect. Kept separately so SetProxy/SetTLSConfig/Clone can
+	// carry it forward when the internal *http.Client is rebuilt.
+	// nil means Go's default redirect behaviour (net/http.Client's built-in policy).
+	checkRedirect func(req *http.Request, via []*http.Request) error
 }
 
 // Header - additional  headers to set

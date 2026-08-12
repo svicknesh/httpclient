@@ -32,43 +32,71 @@ func newTestServer(handler http.Handler) (*httptest.Server, bool) {
 	return srv, true
 }
 
+// TestClient verifies a GET request end-to-end against a local httptest
+// server: the outgoing method, path, and headers are exactly what was
+// configured, and the response status, body, and content type are read back
+// correctly through the normal httpclient response path. A request error
+// fails the test rather than being logged and ignored.
 func TestClient(t *testing.T) {
+	const responseBody = `[{"id":1,"username":"johndoe"}]`
 
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	var mu sync.Mutex
+	var gotMethod, gotPath, gotContentType, gotCustomHeader string
 
-	//client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+	srv, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotContentType = r.Header.Get("Content-type")
+		gotCustomHeader = r.Header.Get("my-custom-header")
+		mu.Unlock()
 
-	client := NewRequest("https://httpclienttest.free.beeceptor.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(responseBody))
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer srv.Close()
+
+	client := NewRequest(srv.URL, 10*time.Second, nil, Headers{Header{Key: "Content-type", Value: "application/json"}})
 	client.SetHeader("my-custom-header", "cool value yo!")
 
 	response, err := client.Get(context.Background(), "/users")
-	if nil != err {
-		fmt.Println(err)
-		return
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	fmt.Println(response.Buffer.String())
-	fmt.Println(response.StatusCode)
+	mu.Lock()
+	method, path, contentType, customHeader := gotMethod, gotPath, gotContentType, gotCustomHeader
+	mu.Unlock()
 
-	//fmt.Println(response.Buffer.String())
+	if method != http.MethodGet {
+		t.Fatalf("expected method GET, got %q", method)
+	}
+	if path != "/users" {
+		t.Fatalf("expected path /users, got %q", path)
+	}
+	if contentType != "application/json" {
+		t.Fatalf("expected Content-type application/json, got %q", contentType)
+	}
+	if customHeader != "cool value yo!" {
+		t.Fatalf("expected my-custom-header %q, got %q", "cool value yo!", customHeader)
+	}
 
-	fmt.Println("Media type is " + response.GetContentType().Media)
-	fmt.Printf("Is JSON response: %t\n", response.IsJSON())
-	fmt.Println(response.TLS.HandshakeComplete)
-
-	/*
-		if response.IsJSON() {
-			type User struct {
-				ID       int    `json:"id"`
-				Username string `json:"username"`
-			}
-
-			var users []User
-			response.ToJSON(&users)
-			fmt.Println(users)
-		}
-	*/
-
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", response.StatusCode)
+	}
+	if response.String() != responseBody {
+		t.Fatalf("unexpected body: got %q, want %q", response.String(), responseBody)
+	}
+	if media := response.GetContentType().Media; media != "application/json" {
+		t.Fatalf("expected media type application/json, got %q", media)
+	}
+	if !response.IsJSON() {
+		t.Fatal("expected IsJSON() to be true")
+	}
 }
 
 func TestProto(t *testing.T) {
@@ -101,44 +129,34 @@ func TestProto(t *testing.T) {
 
 }
 
+// BenchmarkClient measures the cost of a GET request through the normal
+// httpclient path against a local httptest server. Setup (server and client
+// construction) happens before b.ResetTimer so only the request/response
+// cost is measured. A setup or request error fails the benchmark rather than
+// returning silently.
 func BenchmarkClient(b *testing.B) {
-
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
-
-	//client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
-	client := NewRequest("https://jsonplaceholder.typicode.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
-
-	for i := 0; i < b.N; i++ {
-
-		response, err := client.Get(context.Background(), "/users")
-		if nil != err {
-			//log.Println(err)
-			return
-		}
-		_ = response
-
-		//log.Println(response.StatusCode)
-
-		//fmt.Println(response.Buffer.String())
-
-		//fmt.Println("Media type is " + response.GetContentType().Media)
-		//fmt.Printf("Is JSON response: %t\n", response.IsJSON())
-
-		/*
-			if response.IsJSON() {
-				type User struct {
-					ID       int    `json:"id"`
-					Username string `json:"username"`
-				}
-
-				var users []User
-				response.ToJSON(&users)
-				fmt.Println(users)
-			}
-		*/
-
+	srv, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	if !ok {
+		b.Skip("TCP listener not available in this environment")
 	}
+	defer srv.Close()
 
+	client := NewRequest(srv.URL, 10*time.Second, nil, Headers{Header{Key: "Content-type", Value: "application/json"}})
+
+	b.ResetTimer()
+	for range b.N {
+		response, err := client.Get(context.Background(), "/users")
+		if err != nil {
+			b.Fatalf("unexpected error: %v", err)
+		}
+		if response.StatusCode != http.StatusOK {
+			b.Fatalf("unexpected status: %d", response.StatusCode)
+		}
+	}
 }
 
 func TestSlash(t *testing.T) {
@@ -154,24 +172,58 @@ func TestSlash(t *testing.T) {
 
 }
 
+// TestOptions verifies an OPTIONS request end-to-end against a local
+// httptest server: the outgoing method, path, and headers are exactly what
+// was configured, and the response status and headers are read back
+// correctly. A request error fails the test rather than being logged and
+// ignored.
 func TestOptions(t *testing.T) {
+	var mu sync.Mutex
+	var gotMethod, gotPath, gotCustomHeader string
 
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	srv, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotCustomHeader = r.Header.Get("my-custom-header")
+		mu.Unlock()
 
-	//client := NewRequest(true, ProtocolHTTP1, "jsonplaceholder.typicode.com", 443, 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer srv.Close()
 
-	client := NewRequest("https://httpclienttest.free.beeceptor.com", 10, tlsConfig, Headers{Header{Key: "Content-type", Value: "application/json"}})
+	client := NewRequest(srv.URL, 10*time.Second, nil, Headers{Header{Key: "Content-type", Value: "application/json"}})
 	client.SetHeader("my-custom-header", "cool value yo!")
 
 	response, err := client.Options(context.Background(), "/users")
-	if nil != err {
-		fmt.Println(err)
-		return
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	fmt.Println(response.GetHeader("Access-Control-Allow-Methods"))
-	fmt.Println(response.StatusCode)
+	mu.Lock()
+	method, path, customHeader := gotMethod, gotPath, gotCustomHeader
+	mu.Unlock()
 
+	if method != http.MethodOptions {
+		t.Fatalf("expected method OPTIONS, got %q", method)
+	}
+	if path != "/users" {
+		t.Fatalf("expected path /users, got %q", path)
+	}
+	if customHeader != "cool value yo!" {
+		t.Fatalf("expected my-custom-header %q, got %q", "cool value yo!", customHeader)
+	}
+
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d", response.StatusCode)
+	}
+	if got := response.GetHeader("Access-Control-Allow-Methods"); len(got) == 0 || got[0] != "GET, POST, OPTIONS" {
+		t.Fatalf("expected Access-Control-Allow-Methods header, got %v", got)
+	}
 }
 
 // TestRetrySuccess verifies that the client retries on 503 and eventually
@@ -813,6 +865,532 @@ func TestResponseStatus(t *testing.T) {
 		}
 		if resp.IsServerError() != tc.serverErr {
 			t.Errorf("IsServerError(%d) = %v, want %v", tc.code, resp.IsServerError(), tc.serverErr)
+		}
+	}
+}
+
+// --- Redirect control tests ---
+
+// TestRedirectDefaultBehaviorUnchanged verifies that a Request created via
+// NewRequest, without any redirect-policy call, still follows redirects
+// using Go's standard net/http default behaviour.
+func TestRedirectDefaultBehaviorUnchanged(t *testing.T) {
+	var targetHits atomic.Int32
+
+	target, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("landed"))
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer target.Close()
+
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/landing")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+
+	resp, err := client.Get(context.Background(), "/start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected the default client to follow the redirect to 200, got %d", resp.StatusCode)
+	}
+	if resp.String() != "landed" {
+		t.Fatalf("unexpected body: %q", resp.String())
+	}
+	if targetHits.Load() != 1 {
+		t.Fatalf("expected redirect target to be hit exactly once, got %d", targetHits.Load())
+	}
+}
+
+// TestDisableRedirects verifies that DisableRedirects prevents the redirect
+// destination from ever being contacted and returns the redirect response
+// itself as an ordinary, usable Response.
+func TestDisableRedirects(t *testing.T) {
+	var targetHits atomic.Int32
+
+	target, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer target.Close()
+
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/landing")
+		w.WriteHeader(http.StatusFound) // 302
+		_, _ = w.Write([]byte("redirecting"))
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+	client.DisableRedirects()
+
+	resp, err := client.Get(context.Background(), "/start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected the unfollowed 302 to be returned, got %d", resp.StatusCode)
+	}
+	if resp.String() != "redirecting" {
+		t.Fatalf("unexpected body: %q", resp.String())
+	}
+	if got := resp.GetHeader("Location"); len(got) == 0 || got[0] != target.URL+"/landing" {
+		t.Fatalf("expected Location header to be preserved, got %v", got)
+	}
+	if targetHits.Load() != 0 {
+		t.Fatalf("redirect destination must never be contacted, got %d hits", targetHits.Load())
+	}
+}
+
+// TestDisableRedirectsAllStatuses verifies DisableRedirects across every
+// redirect status code called out in the requirements: 301, 302, 303, 307, 308.
+func TestDisableRedirectsAllStatuses(t *testing.T) {
+	statuses := []int{
+		http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+	}
+
+	for _, status := range statuses {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var targetHits atomic.Int32
+
+			target, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				targetHits.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			if !ok {
+				t.Skip("TCP listener not available in this environment")
+			}
+			defer target.Close()
+
+			origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Location", target.URL+"/landing")
+				w.WriteHeader(status)
+			}))
+			if !ok {
+				t.Skip("TCP listener not available in this environment")
+			}
+			defer origin.Close()
+
+			client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+			client.DisableRedirects()
+
+			resp, err := client.Get(context.Background(), "/start")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.StatusCode != status {
+				t.Fatalf("expected status %d, got %d", status, resp.StatusCode)
+			}
+			if targetHits.Load() != 0 {
+				t.Fatalf("redirect destination must never be contacted for status %d, got %d hits", status, targetHits.Load())
+			}
+		})
+	}
+}
+
+// TestDisableRedirectsCredentialSafety proves, structurally, that no
+// credential — Basic/Bearer Authorization or an arbitrary custom header such
+// as X-Api-Key — ever reaches a redirect destination once DisableRedirects
+// is set. The destination handler receives zero requests, so it cannot see
+// the credential header even if it wanted to.
+func TestDisableRedirectsCredentialSafety(t *testing.T) {
+	cases := []struct {
+		name      string
+		setup     func(c *Request)
+		headerKey string
+	}{
+		{"BasicAuth", func(c *Request) { c.SetBasicAuth("user", "pass") }, "Authorization"},
+		{"BearerToken", func(c *Request) { c.SetBearerToken("secret-token") }, "Authorization"},
+		{"CustomAPIKey", func(c *Request) { c.SetHeader("X-Api-Key", "super-secret") }, "X-Api-Key"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var targetHits atomic.Int32
+			var targetSawHeader atomic.Bool
+
+			target, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				targetHits.Add(1)
+				if r.Header.Get(tc.headerKey) != "" {
+					targetSawHeader.Store(true)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			if !ok {
+				t.Skip("TCP listener not available in this environment")
+			}
+			defer target.Close()
+
+			origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Location", target.URL+"/landing")
+				w.WriteHeader(http.StatusFound)
+			}))
+			if !ok {
+				t.Skip("TCP listener not available in this environment")
+			}
+			defer origin.Close()
+
+			client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+			tc.setup(client)
+			client.DisableRedirects()
+
+			_, err := client.Get(context.Background(), "/start")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if targetHits.Load() != 0 {
+				t.Fatalf("redirect destination must receive zero requests, got %d", targetHits.Load())
+			}
+			if targetSawHeader.Load() {
+				t.Fatal("redirect destination must never see the credential header")
+			}
+		})
+	}
+}
+
+// TestSetCheckRedirectCustomPolicy verifies that a caller-installed policy is
+// actually invoked, can allow one redirect and reject the next, and that the
+// destinations it was invoked for are exactly what's expected.
+func TestSetCheckRedirectCustomPolicy(t *testing.T) {
+	var mu sync.Mutex
+	var seenVia []string
+
+	final, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("final hop must never be reached: custom policy should reject the second redirect")
+		w.WriteHeader(http.StatusOK)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer final.Close()
+
+	hop2, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", final.URL+"/final")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer hop2.Close()
+
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", hop2.URL+"/hop2")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	errTooManyRedirects := errors.New("custom policy: only one redirect allowed")
+
+	client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+	client.SetCheckRedirect(func(req *http.Request, via []*http.Request) error {
+		mu.Lock()
+		seenVia = append(seenVia, req.URL.String())
+		mu.Unlock()
+		// via holds every request already made, oldest first. On the first
+		// invocation (allowing the origin -> hop2 redirect) via has length 1
+		// (just the original request). Reject once a second redirect is
+		// attempted (hop2 -> final).
+		if len(via) >= 2 {
+			return errTooManyRedirects
+		}
+		return nil
+	})
+
+	_, err := client.Get(context.Background(), "/start")
+	if err == nil {
+		t.Fatal("expected an error from the second redirect being rejected, got nil")
+	}
+	if !errors.Is(err, errTooManyRedirects) {
+		t.Fatalf("expected error to wrap errTooManyRedirects, got %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seenVia) != 2 {
+		t.Fatalf("expected the policy to be invoked exactly twice (allow, then reject), got %d: %v", len(seenVia), seenVia)
+	}
+}
+
+// TestSetCheckRedirectNilRestoresDefault verifies that a caller can clear a
+// previously configured redirect policy by calling SetCheckRedirect(nil),
+// restoring Go's default redirect-following behaviour.
+func TestSetCheckRedirectNilRestoresDefault(t *testing.T) {
+	var targetHits atomic.Int32
+
+	target, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("landed"))
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer target.Close()
+
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/landing")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+	client.DisableRedirects()
+
+	// Confirm redirects are indeed disabled first.
+	resp, err := client.Get(context.Background(), "/start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected redirects to be disabled, got status %d", resp.StatusCode)
+	}
+	if targetHits.Load() != 0 {
+		t.Fatalf("expected target not to be hit while redirects are disabled, got %d", targetHits.Load())
+	}
+
+	// Clear the policy — default behaviour must be restored.
+	client.SetCheckRedirect(nil)
+	if client.checkRedirect != nil {
+		t.Fatal("expected checkRedirect to be nil after SetCheckRedirect(nil)")
+	}
+	if client.conn.CheckRedirect != nil {
+		t.Fatal("expected conn.CheckRedirect to be nil after SetCheckRedirect(nil)")
+	}
+
+	resp, err = client.Get(context.Background(), "/start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected the default client to follow the redirect after clearing the policy, got %d", resp.StatusCode)
+	}
+	if targetHits.Load() != 1 {
+		t.Fatalf("expected target to be hit exactly once after restoring default behaviour, got %d", targetHits.Load())
+	}
+}
+
+// TestCloneCarriesRedirectPolicy verifies that Clone copies the configured
+// redirect policy to the clone, and that the two remain independent after
+// cloning.
+func TestCloneCarriesRedirectPolicy(t *testing.T) {
+	var targetHits atomic.Int32
+
+	target, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer target.Close()
+
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/landing")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	original := NewRequest(origin.URL, 5*time.Second, nil, nil)
+	original.DisableRedirects()
+
+	clone := original.Clone()
+
+	resp, err := clone.Get(context.Background(), "/start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected clone to inherit the disabled-redirect policy, got status %d", resp.StatusCode)
+	}
+	if targetHits.Load() != 0 {
+		t.Fatalf("clone must not follow the redirect, got %d hits on target", targetHits.Load())
+	}
+
+	// Independence: clearing the policy on the clone must not affect the original.
+	clone.SetCheckRedirect(nil)
+	if original.checkRedirect == nil {
+		t.Fatal("clearing the clone's redirect policy must not affect the original")
+	}
+}
+
+// TestRedirectPolicyPreservedAcrossSetProxyAndSetTLSConfig verifies that
+// SetProxy and SetTLSConfig, which both rebuild the internal *http.Client,
+// do not silently drop a previously configured redirect policy.
+func TestRedirectPolicyPreservedAcrossSetProxyAndSetTLSConfig(t *testing.T) {
+	client := NewRequest("https://example.com", 5*time.Second, nil, nil)
+	client.DisableRedirects()
+
+	proxyURL, err := url.Parse("http://proxy.example.com:8080")
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+	client.SetProxy(proxyURL)
+	if client.conn.CheckRedirect == nil {
+		t.Fatal("SetProxy must not reset a previously configured redirect policy")
+	}
+	if err := client.conn.CheckRedirect(&http.Request{}, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("expected the disable-redirects policy to survive SetProxy, got %v", err)
+	}
+
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	client.SetTLSConfig(tlsConfig)
+	if client.conn.CheckRedirect == nil {
+		t.Fatal("SetTLSConfig must not reset a previously configured redirect policy")
+	}
+	if err := client.conn.CheckRedirect(&http.Request{}, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("expected the disable-redirects policy to survive SetTLSConfig, got %v", err)
+	}
+}
+
+// TestDisableRedirectsRetryOnConfigured3xx documents the actual resulting
+// behaviour when a caller explicitly configures a 3xx status inside
+// RetryConfig.RetryOn: the disabled-redirect response is retried like any
+// other retryable status, while the redirect destination is still never
+// contacted.
+func TestDisableRedirectsRetryOnConfigured3xx(t *testing.T) {
+	var originHits atomic.Int32
+	var targetHits atomic.Int32
+
+	target, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer target.Close()
+
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originHits.Add(1)
+		w.Header().Set("Location", target.URL+"/landing")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+	client.DisableRedirects()
+	client.RetryConfig = RetryConfig{
+		MaxAttempts: 3,
+		RetryOn:     []int{http.StatusFound}, // 302 explicitly opted in as retryable
+		BaseDelay:   1 * time.Millisecond,
+		MaxDelay:    5 * time.Millisecond,
+		Multiplier:  2.0,
+	}
+
+	resp, err := client.Get(context.Background(), "/start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected the final response to still be the unfollowed 302, got %d", resp.StatusCode)
+	}
+	if originHits.Load() != 3 {
+		t.Fatalf("expected 3 attempts against origin because 302 was explicitly configured as retryable, got %d", originHits.Load())
+	}
+	if targetHits.Load() != 0 {
+		t.Fatalf("redirect target must never be contacted even while retrying the disabled redirect, got %d", targetHits.Load())
+	}
+}
+
+// TestDisableRedirectsDefaultRetryOnDoesNotRetry3xx verifies that a disabled
+// redirect is NOT silently treated as retryable when RetryOn is left at its
+// default — the default retry status list ([429, 500, 502, 503, 504]) does
+// not include any 3xx code.
+func TestDisableRedirectsDefaultRetryOnDoesNotRetry3xx(t *testing.T) {
+	var originHits atomic.Int32
+
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originHits.Add(1)
+		w.Header().Set("Location", "http://example.invalid/landing")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+	client.DisableRedirects()
+	client.RetryConfig = RetryConfig{
+		MaxAttempts: 3, // RetryOn left nil -> defaults to [429, 500, 502, 503, 504]
+		BaseDelay:   1 * time.Millisecond,
+	}
+
+	resp, err := client.Get(context.Background(), "/start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected 302, got %d", resp.StatusCode)
+	}
+	if originHits.Load() != 1 {
+		t.Fatalf("expected exactly 1 attempt: default RetryOn does not include 3xx, got %d", originHits.Load())
+	}
+}
+
+// TestDisableRedirectsCircuitBreakerNotTrippedByDefault verifies that a
+// disabled-redirect response does not count as a circuit-breaker failure
+// under the default FailOn policy, so the circuit never opens.
+func TestDisableRedirectsCircuitBreakerNotTrippedByDefault(t *testing.T) {
+	origin, ok := newTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "http://example.invalid/landing")
+		w.WriteHeader(http.StatusFound)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer origin.Close()
+
+	client := NewRequest(origin.URL, 5*time.Second, nil, nil)
+	client.DisableRedirects()
+	client.CircuitBreaker = CircuitBreakerConfig{
+		Enabled:      true,
+		MaxFailures:  2,
+		ResetTimeout: 10 * time.Second,
+		// FailOn left nil -> defaults to the same list as RetryConfig.RetryOn's default.
+	}
+
+	for i := range 5 {
+		resp, err := client.Get(context.Background(), "/start")
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusFound {
+			t.Fatalf("call %d: expected 302, got %d", i, resp.StatusCode)
 		}
 	}
 }

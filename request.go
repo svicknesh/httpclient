@@ -130,6 +130,33 @@ func (request *Request) SetBearerToken(token string) {
 	request.headers.Set("Authorization", "Bearer "+token)
 }
 
+// SetCheckRedirect installs a custom redirect policy on the Request, mirroring
+// the semantics of http.Client.CheckRedirect: fn is called before following
+// each redirect, req is the pending request, and via holds the requests made
+// so far, oldest first. Returning an error (or http.ErrUseLastResponse) stops
+// redirect following. Passing nil restores Go's default redirect behaviour.
+//
+// This is a configuration-time setting: configure it before the Request is
+// used concurrently. Do not call it while requests issued from this Request
+// may still be in flight.
+func (request *Request) SetCheckRedirect(fn func(req *http.Request, via []*http.Request) error) {
+	request.checkRedirect = fn
+	request.conn.CheckRedirect = fn
+}
+
+// DisableRedirects configures the Request to stop following HTTP redirects.
+// The redirect response (301, 302, 303, 307, 308, or any other 3xx) is
+// returned to the caller as an ordinary Response instead of being followed,
+// so credentials carried on the original request (Authorization, custom
+// headers such as X-Api-Key, etc.) are never sent to the redirect
+// destination. Equivalent to SetCheckRedirect with a policy that always
+// returns http.ErrUseLastResponse.
+func (request *Request) DisableRedirects() {
+	request.SetCheckRedirect(func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	})
+}
+
 // SetRateLimit configures a token-bucket rate limiter on the Request.
 // limit is the maximum number of requests per second; burst is the maximum burst size.
 // Subsequent calls to connect will wait for a token before each HTTP request.
@@ -144,6 +171,7 @@ func (request *Request) SetRateLimit(limit Limit, burst int) {
 //   - Its own random source seeded from crypto/rand.
 //   - A shared RateLimiter pointer (intentional — clone and original share token quota).
 //   - Copied scalar fields (Address, Suffix, suffixEnabled, timeout, RetryConfig, CircuitBreaker config).
+//   - The same redirect policy (set via SetCheckRedirect/DisableRedirects), applied independently to the clone's own HTTP client.
 func (request *Request) Clone() *Request {
 	clone := new(Request)
 
@@ -154,7 +182,8 @@ func (request *Request) Clone() *Request {
 
 	// Independent transport and HTTP client.
 	clone.transport = request.transport.Clone()
-	clone.conn = &http.Client{Transport: clone.transport, Timeout: clone.timeout}
+	clone.checkRedirect = request.checkRedirect
+	clone.conn = &http.Client{Transport: clone.transport, Timeout: clone.timeout, CheckRedirect: clone.checkRedirect}
 
 	// Independent header map.
 	clone.headers = request.headers.Clone()
@@ -183,7 +212,7 @@ func (request *Request) SetProxy(proxyURL *url.URL) {
 	} else {
 		request.transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	request.conn = &http.Client{Transport: request.transport, Timeout: request.timeout}
+	request.conn = &http.Client{Transport: request.transport, Timeout: request.timeout, CheckRedirect: request.checkRedirect}
 }
 
 // SetSuffix - sets a base suffix for all endpoint operations
@@ -218,7 +247,7 @@ func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
 	tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{} // disable HTTP/2; it forbids renegotiation
 	tr.CloseIdleConnections()
 
-	request.conn = &http.Client{Transport: tr, Timeout: request.timeout}
+	request.conn = &http.Client{Transport: tr, Timeout: request.timeout, CheckRedirect: request.checkRedirect}
 }
 
 // connect - execute the connection

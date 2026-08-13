@@ -89,6 +89,11 @@ response, err := client.Get("/healthcheck")
 client.EnableSuffix(false) // enable usage of suffix
 ```
 
+TLS configurations supplied to `NewRequest` or `SetTLSConfig` are snapshotted.
+Callers may reuse or mutate their original `tls.Config` after configuration
+without affecting the Request — this also means independent Requests built
+from the same shared `*tls.Config` are safe to use concurrently.
+
 
 ## Redirect control
 

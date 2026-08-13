@@ -3,6 +3,7 @@ package httpclient
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1392,5 +1393,220 @@ func TestDisableRedirectsCircuitBreakerNotTrippedByDefault(t *testing.T) {
 		if resp.StatusCode != http.StatusFound {
 			t.Fatalf("call %d: expected 302, got %d", i, resp.StatusCode)
 		}
+	}
+}
+
+// newTLSTestServer starts an httptest TLS server bound to 127.0.0.1 (IPv4).
+// Returns (server, true) on success, or (nil, false) if the environment does
+// not allow TCP listeners (e.g. a restricted sandbox), matching the
+// newTestServer skip convention used throughout this file.
+func newTLSTestServer(handler http.Handler) (*httptest.Server, bool) {
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return nil, false
+	}
+	srv := httptest.NewUnstartedServer(handler)
+	srv.Listener = l
+	srv.StartTLS()
+	return srv, true
+}
+
+// trustedTLSConfig returns a *tls.Config that trusts srv's certificate via a
+// dedicated CertPool, so TLS ownership tests exercise real certificate
+// verification instead of InsecureSkipVerify.
+func trustedTLSConfig(srv *httptest.Server) *tls.Config {
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	return &tls.Config{RootCAs: pool}
+}
+
+// TestNewRequestSnapshotsCallerTLSConfig proves that NewRequest takes a
+// private snapshot of the caller-supplied *tls.Config instead of retaining
+// the caller-owned pointer: mutating the original after construction must
+// not alter the Request, and the Request must not hold the same pointer.
+func TestNewRequestSnapshotsCallerTLSConfig(t *testing.T) {
+	original := &tls.Config{ServerName: "caller-owned.example.com"}
+
+	client := NewRequest("https://example.com", 5*time.Second, original, nil)
+
+	// Mutate the caller's original config after construction.
+	original.ServerName = "mutated-after-construction.example.com"
+	original.InsecureSkipVerify = true
+
+	got := client.GetTLSConfig()
+	if got == original {
+		t.Fatal("NewRequest must not retain the caller's *tls.Config pointer")
+	}
+	if got.ServerName != "caller-owned.example.com" {
+		t.Fatalf("Request's TLS config was affected by a later mutation to the caller's config: got ServerName %q", got.ServerName)
+	}
+	if got.InsecureSkipVerify {
+		t.Fatal("Request's TLS config was affected by a later mutation to the caller's config")
+	}
+}
+
+// TestSetTLSConfigSnapshotsCallerConfig proves that SetTLSConfig also takes a
+// private snapshot rather than retaining the caller-owned pointer.
+func TestSetTLSConfigSnapshotsCallerConfig(t *testing.T) {
+	client := NewRequest("https://example.com", 5*time.Second, nil, nil)
+
+	original := &tls.Config{ServerName: "caller-owned.example.com"}
+	client.SetTLSConfig(original)
+
+	original.ServerName = "mutated-after-set.example.com"
+
+	got := client.GetTLSConfig()
+	if got == original {
+		t.Fatal("SetTLSConfig must not retain the caller's *tls.Config pointer")
+	}
+	if got.ServerName != "caller-owned.example.com" {
+		t.Fatalf("Request's TLS config was affected by a later mutation to the caller's config: got ServerName %q", got.ServerName)
+	}
+}
+
+// TestSetTLSConfigNilDoesNotPanic verifies that passing nil to SetTLSConfig
+// resets the transport to Go's default TLS behaviour instead of panicking.
+func TestSetTLSConfigNilDoesNotPanic(t *testing.T) {
+	client := NewRequest("https://example.com", 5*time.Second, &tls.Config{InsecureSkipVerify: true}, nil)
+
+	client.SetTLSConfig(nil)
+
+	if got := client.GetTLSConfig(); got != nil {
+		t.Fatalf("expected nil TLS config after SetTLSConfig(nil), got %+v", got)
+	}
+}
+
+// TestCloneTLSConfigIndependent verifies that Clone gives the clone an
+// independent TLS configuration snapshot: neither shares mutable TLS state
+// with the original, in either direction.
+func TestCloneTLSConfigIndependent(t *testing.T) {
+	shared := &tls.Config{ServerName: "shared.example.com"}
+	original := NewRequest("https://example.com", 5*time.Second, shared, nil)
+	clone := original.Clone()
+
+	if clone.GetTLSConfig() == original.GetTLSConfig() {
+		t.Fatal("Clone must have an independent TLS config from the original")
+	}
+
+	clone.SetTLSConfig(&tls.Config{ServerName: "clone-only.example.com"})
+	if original.GetTLSConfig().ServerName == "clone-only.example.com" {
+		t.Fatal("mutating the clone's TLS config must not affect the original")
+	}
+
+	original.SetTLSConfig(&tls.Config{ServerName: "original-only.example.com"})
+	if clone.GetTLSConfig().ServerName == "original-only.example.com" {
+		t.Fatal("mutating the original's TLS config must not affect the clone")
+	}
+}
+
+// TestSetProxyDoesNotAlterTLSConfig verifies that SetProxy, which rebuilds
+// the internal *http.Client, does not replace or clear the Request's TLS
+// configuration.
+func TestSetProxyDoesNotAlterTLSConfig(t *testing.T) {
+	tlsConfig := &tls.Config{ServerName: "example.com"}
+	client := NewRequest("https://example.com", 5*time.Second, tlsConfig, nil)
+	before := client.GetTLSConfig()
+
+	proxyURL, err := url.Parse("http://proxy.example.com:8080")
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+	client.SetProxy(proxyURL)
+
+	after := client.GetTLSConfig()
+	if before != after {
+		t.Fatal("SetProxy must not replace or clear the Request's TLS configuration")
+	}
+}
+
+// TestSetTLSConfigConcurrentRequestsIndependentFromSharedInput verifies that
+// when multiple independently constructed Requests are configured
+// concurrently via SetTLSConfig using the same caller-owned *tls.Config
+// pointer, each Request ends up with its own independent, private TLS
+// configuration rather than sharing one.
+func TestSetTLSConfigConcurrentRequestsIndependentFromSharedInput(t *testing.T) {
+	shared := &tls.Config{ServerName: "shared.example.com"}
+
+	const n = 8
+	requests := make([]*Request, n)
+	for i := range requests {
+		requests[i] = NewRequest("https://example.com", 5*time.Second, nil, nil)
+	}
+
+	var wg sync.WaitGroup
+	for _, r := range requests {
+		wg.Add(1)
+		go func(req *Request) {
+			defer wg.Done()
+			req.SetTLSConfig(shared)
+		}(r)
+	}
+	wg.Wait()
+
+	seen := make(map[*tls.Config]bool, n)
+	for _, r := range requests {
+		cfg := r.GetTLSConfig()
+		if cfg == shared {
+			t.Fatal("SetTLSConfig must not retain the caller's *tls.Config pointer")
+		}
+		if seen[cfg] {
+			t.Fatal("two Requests must not share the same cloned *tls.Config pointer")
+		}
+		seen[cfg] = true
+	}
+}
+
+// TestConcurrentRequestsSharedTLSConfigNoRace is the required race regression
+// test for the TLS ownership fix. It reproduces the usage pattern that
+// exposed the original defect: multiple independently constructed
+// httpclient.Request instances built from one shared caller-owned
+// *tls.Config, dispatching real HTTPS requests concurrently against a local
+// httptest TLS server, exercising HTTP transport/TLS initialization for the
+// first time on each Request concurrently.
+//
+// Before the fix, this races on the shared *tls.Config:
+// net/http.(*Transport).onceSetNextProtoDefaults writes
+// TLSClientConfig.NextProtos directly on the shared object (see the
+// "Transport doesn't [clone]" comment in the net/http source), while
+// crypto/tls concurrently reads the same config during the handshake. All
+// requests must succeed and go test -race must report no race.
+func TestConcurrentRequestsSharedTLSConfigNoRace(t *testing.T) {
+	srv, ok := newTLSTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	if !ok {
+		t.Skip("TCP listener not available in this environment")
+	}
+	defer srv.Close()
+
+	sharedTLSConfig := trustedTLSConfig(srv)
+
+	const numClients = 16
+	clients := make([]*Request, numClients)
+	for i := range clients {
+		clients[i] = NewRequest(srv.URL, 5*time.Second, sharedTLSConfig, nil)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, numClients)
+	for _, client := range clients {
+		wg.Add(1)
+		go func(c *Request) {
+			defer wg.Done()
+			resp, err := c.Get(context.Background(), "/ping")
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if resp.StatusCode != http.StatusOK {
+				errCh <- fmt.Errorf("unexpected status %d", resp.StatusCode)
+			}
+		}(client)
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("concurrent request failed: %v", err)
 	}
 }

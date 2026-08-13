@@ -15,7 +15,12 @@ import (
 	"time"
 )
 
-// NewRequest - create a new instance of Request
+// NewRequest - create a new instance of Request. tlsConfig, if non-nil, is
+// snapshotted via Clone: httpclient takes a private copy rather than
+// retaining the caller's pointer, so the caller may reuse or mutate the
+// original *tls.Config after this call without affecting the Request, and
+// independent Requests built from the same *tls.Config are safe to use
+// concurrently.
 func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, headers Headers) (request *Request) {
 
 	request = new(Request)
@@ -27,7 +32,12 @@ func NewRequest(address string, timeout time.Duration, tlsConfig *tls.Config, he
 	request.Address = address
 
 	request.transport = http.DefaultTransport.(*http.Transport).Clone()
-	request.transport.TLSClientConfig = tlsConfig
+	// Clone (nil-safe) so this Request never shares a mutable *tls.Config
+	// with the caller or with any other Request built from the same pointer;
+	// Go's net/http mutates TLSClientConfig fields in place during transport
+	// initialization (see Transport.onceSetNextProtoDefaults), which races
+	// when multiple Transports share one *tls.Config.
+	request.transport.TLSClientConfig = tlsConfig.Clone()
 	request.transport.MaxIdleConns = 100
 	request.transport.MaxConnsPerHost = 100
 	request.transport.MaxIdleConnsPerHost = 100
@@ -236,10 +246,17 @@ func (request *Request) GetTLSConfig() (tlsConfig *tls.Config) {
 	return request.transport.TLSClientConfig
 }
 
-// SetTLSConfig - overrides existing TLS configuration with a new one; downgrades to HTTP/1.1 because HTTP/2 forbids TLS renegotiation (RFC 7540 §9.2.1)
+// SetTLSConfig - overrides existing TLS configuration with a new one; downgrades to HTTP/1.1 because HTTP/2 forbids TLS renegotiation (RFC 7540 §9.2.1).
+// tlsConfig is snapshotted via Clone (nil-safe): httpclient takes a private
+// copy rather than retaining the caller's pointer, so the caller may reuse or
+// mutate the original *tls.Config afterward without affecting the Request.
+// Passing nil clears the transport's TLS configuration, reverting to Go's
+// default TLS behaviour, without panicking.
 func (request *Request) SetTLSConfig(tlsConfig *tls.Config) {
-	tlsConfig = tlsConfig.Clone() // clone to avoid mutating the caller's config
-	tlsConfig.Renegotiation = tls.RenegotiateOnceAsClient
+	tlsConfig = tlsConfig.Clone() // clone (nil-safe) to avoid sharing or mutating the caller's config
+	if tlsConfig != nil {
+		tlsConfig.Renegotiation = tls.RenegotiateOnceAsClient
+	}
 
 	tr := request.transport
 
